@@ -69,16 +69,16 @@ def from_buffers(
     """
     with ak._errors.OperationErrorContext(
         "ak.from_buffers",
-        dict(
-            form=form,
-            length=length,
-            container=container,
-            buffer_key=buffer_key,
-            backend=backend,
-            byteorder=byteorder,
-            highlevel=highlevel,
-            behavior=behavior,
-        ),
+        {
+            "form": form,
+            "length": length,
+            "container": container,
+            "buffer_key": buffer_key,
+            "backend": backend,
+            "byteorder": byteorder,
+            "highlevel": highlevel,
+            "behavior": behavior,
+        },
     ):
         return _impl(
             form,
@@ -170,7 +170,7 @@ def reconstitute(form, length, container, getkey, backend, byteorder, simplify):
             raise ak._errors.wrap_error(
                 ValueError(f"EmptyForm node, but the expected length is {length}")
             )
-        return ak.contents.EmptyArray(parameters=form.parameters)
+        return ak.contents.EmptyArray()
 
     elif isinstance(form, ak.forms.NumpyForm):
         dtype = ak.types.numpytype.primitive_to_dtype(form.primitive)
@@ -187,9 +187,9 @@ def reconstitute(form, length, container, getkey, backend, byteorder, simplify):
         )
         if form.inner_shape != ():
             if len(data) == 0:
-                data = data.reshape((length,) + form.inner_shape)
+                data = backend.nplike.reshape(data, (length, *form.inner_shape))
             else:
-                data = data.reshape((-1,) + form.inner_shape)
+                data = backend.nplike.reshape(data, (-1, *form.inner_shape))
         return ak.contents.NumpyArray(data, parameters=form.parameters, backend=backend)
 
     elif isinstance(form, ak.forms.UnmaskedForm):

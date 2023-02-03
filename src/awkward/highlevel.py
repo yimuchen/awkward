@@ -12,6 +12,7 @@ from collections.abc import Iterable, Mapping, Sized
 from awkward_cpp.lib import _ext
 
 import awkward as ak
+import awkward._connect.hist
 from awkward._nplikes.numpy import Numpy
 from awkward._nplikes.numpylike import NumpyMetadata
 from awkward._util import NDArrayOperatorsMixin
@@ -238,6 +239,8 @@ class Array(NDArrayOperatorsMixin, Iterable, Sized):
         super().__init_subclass__(**kwargs)
 
         ak.jax.register_behavior_class(cls)
+
+    _histogram_module_ = awkward._connect.hist
 
     @property
     def layout(self):
@@ -1016,7 +1019,7 @@ class Array(NDArrayOperatorsMixin, Iterable, Sized):
         """
         with ak._errors.OperationErrorContext(
             "ak.Array.__setitem__",
-            dict(self=self, field_name=where, field_value=what),
+            {"self": self, "field_name": where, "field_value": what},
         ):
             if not (
                 isinstance(where, str)
@@ -1049,7 +1052,7 @@ class Array(NDArrayOperatorsMixin, Iterable, Sized):
         """
         with ak._errors.OperationErrorContext(
             "ak.Array.__delitem__",
-            dict(self=self, field_name=where),
+            {"self": self, "field_name": where},
         ):
             if not (
                 isinstance(where, str)
@@ -1765,7 +1768,7 @@ class Record(NDArrayOperatorsMixin):
         """
         with ak._errors.OperationErrorContext(
             "ak.Record.__setitem__",
-            dict(self=self, field_name=where, field_value=what),
+            {"self": self, "field_name": where, "field_value": what},
         ):
             if not (
                 isinstance(where, str)
@@ -1799,7 +1802,7 @@ class Record(NDArrayOperatorsMixin):
         """
         with ak._errors.OperationErrorContext(
             "ak.Record.__delitem__",
-            dict(self=self, field_name=where),
+            {"self": self, "field_name": where},
         ):
             if not (
                 isinstance(where, str)

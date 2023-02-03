@@ -7,10 +7,11 @@ import awkward as ak
 from awkward._nplikes import to_nplike
 from awkward._nplikes.jax import Jax
 from awkward._nplikes.numpy import Numpy
-from awkward._nplikes.numpylike import NumpyMetadata
+from awkward._nplikes.numpylike import ArrayLike, NumpyMetadata
 from awkward._nplikes.typetracer import TypeTracerArray
 from awkward._util import unset
 from awkward.contents.content import Content
+from awkward.forms.form import _type_parameters_equal
 from awkward.forms.numpyform import NumpyForm
 from awkward.types.numpytype import primitive_to_dtype
 from awkward.typing import Final, Self, final
@@ -24,13 +25,12 @@ class NumpyArray(Content):
     is_numpy = True
     is_leaf = True
 
-    def __init__(self, data, *, parameters=None, backend=None):
+    def __init__(self, data: ArrayLike, *, parameters=None, backend=None):
         if backend is None:
             backend = ak._backends.backend_of(
                 data, default=ak._backends.NumpyBackend.instance()
             )
-        if isinstance(data, ak.index.Index):
-            data = data.data
+
         self._data = backend.nplike.asarray(data)
 
         if not isinstance(backend.nplike, Jax):
@@ -58,7 +58,7 @@ class NumpyArray(Content):
         self._init(parameters, backend)
 
     @property
-    def data(self):
+    def data(self) -> ArrayLike:
         return self._data
 
     form_cls: Final = NumpyForm
@@ -185,9 +185,13 @@ class NumpyArray(Content):
         shape = self._data.shape
         zeroslen = [1]
         for x in shape:
-            zeroslen.append(zeroslen[-1] * x)
+            zeroslen.append(self._backend.index_nplike.mul_shape_item(zeroslen[-1], x))
 
-        out = NumpyArray(self._data.reshape(-1), parameters=None, backend=self._backend)
+        out = NumpyArray(
+            self._backend.nplike.reshape(self._data, (-1,)),
+            parameters=None,
+            backend=self._backend,
+        )
         for i in range(len(shape) - 1, 0, -1):
             out = ak.contents.RegularArray(out, shape[i], zeroslen[i], parameters=None)
         out._parameters = self._parameters
@@ -205,7 +209,9 @@ class NumpyArray(Content):
     def _getitem_nothing(self):
         tmp = self._data[0:0]
         return NumpyArray(
-            tmp.reshape((0,) + tmp.shape[2:]), parameters=None, backend=self._backend
+            self._backend.nplike.reshape(tmp, ((0,) + tmp.shape[2:])),
+            parameters=None,
+            backend=self._backend,
         )
 
     def _getitem_at(self, where):
@@ -292,8 +298,8 @@ class NumpyArray(Content):
                 out = self._data[where]
             except IndexError as err:
                 raise ak._errors.index_error(self, (head,) + tail, str(err)) from err
-            out2 = NumpyArray(out, parameters=self._parameters, backend=self._backend)
-            return out2
+
+            return NumpyArray(out, parameters=self._parameters, backend=self._backend)
 
         elif isinstance(head, str):
             return self._getitem_next_field(head, tail, advanced)
@@ -323,8 +329,8 @@ class NumpyArray(Content):
                 out = self._data[where]
             except IndexError as err:
                 raise ak._errors.index_error(self, (head,) + tail, str(err)) from err
-            out2 = NumpyArray(out, parameters=self._parameters, backend=self._backend)
-            return out2
+
+            return NumpyArray(out, parameters=self._parameters, backend=self._backend)
 
         elif isinstance(head, ak.contents.IndexedOptionArray):
             next = self.to_RegularArray()
@@ -347,20 +353,18 @@ class NumpyArray(Content):
             )
 
     def _mergeable_next(self, other, mergebool):
-        if len(self.shape) > 1:
-            return self._to_regular_primitive()._mergeable(other, mergebool)
-
-        if isinstance(
-            other,
-            (
-                ak.contents.IndexedArray,
-                ak.contents.IndexedOptionArray,
-                ak.contents.ByteMaskedArray,
-                ak.contents.BitMaskedArray,
-                ak.contents.UnmaskedArray,
-            ),
-        ):
-            return self._mergeable(other._content, mergebool)
+        # Is the other content is an identity, or a union?
+        if other.is_identity_like or other.is_union:
+            return True
+        # Check against option contents
+        elif other.is_option or other.is_indexed:
+            return self._mergeable_next(other.content, mergebool)
+        # Otherwise, do the parameters match? If not, we can't merge.
+        elif not _type_parameters_equal(self._parameters, other._parameters):
+            return False
+        # Simplify *this* branch to be 1D self
+        elif len(self.shape) > 1:
+            return self._to_regular_primitive()._mergeable_next(other, mergebool)
 
         elif isinstance(other, ak.contents.NumpyArray):
             if self._data.ndim != other._data.ndim:
@@ -410,10 +414,13 @@ class NumpyArray(Content):
 
         parameters = self._parameters
         for array in head:
-            parameters = ak._util.merge_parameters(parameters, array._parameters, True)
             if isinstance(array, ak.contents.EmptyArray):
-                pass
-            elif isinstance(array, ak.contents.NumpyArray):
+                continue
+
+            parameters = ak.forms.form._parameters_intersect(
+                parameters, array._parameters
+            )
+            if isinstance(array, ak.contents.NumpyArray):
                 contiguous_arrays.append(array.data)
             else:
                 raise ak._errors.wrap_error(
@@ -825,23 +832,25 @@ class NumpyArray(Content):
 
         else:
             parents_length = parents.length
-            offsets_length = ak.index.Index64.empty(1, self._backend.index_nplike)
+            _offsets_length = ak.index.Index64.empty(1, self._backend.index_nplike)
             assert (
-                offsets_length.nplike is self._backend.index_nplike
+                _offsets_length.nplike is self._backend.index_nplike
                 and parents.nplike is self._backend.index_nplike
             )
             self._handle_error(
                 self._backend[
                     "awkward_sorting_ranges_length",
-                    offsets_length.dtype.type,
+                    _offsets_length.dtype.type,
                     parents.dtype.type,
                 ](
-                    offsets_length.data,
+                    _offsets_length.data,
                     parents.data,
                     parents_length,
                 )
             )
-            offsets_length = offsets_length[0]
+            offsets_length = self._backend.index_nplike.scalar_as_shape_item(
+                _offsets_length[0]
+            )
 
             offsets = ak.index.Index64.empty(offsets_length, self._backend.index_nplike)
             assert (
@@ -918,7 +927,7 @@ class NumpyArray(Content):
                         starts.length,
                     )
                 )
-            out = NumpyArray(nextcarry, parameters=None, backend=self._backend)
+            out = NumpyArray(nextcarry.data, parameters=None, backend=self._backend)
             return out
 
     def _sort_next(self, negaxis, starts, parents, outlength, ascending, stable):
@@ -935,26 +944,27 @@ class NumpyArray(Content):
 
         else:
             parents_length = parents.length
-            offsets_length = ak.index.Index64.empty(1, self._backend.index_nplike)
+            _offsets_length = ak.index.Index64.empty(1, self._backend.index_nplike)
             assert (
-                offsets_length.nplike is self._backend.index_nplike
+                _offsets_length.nplike is self._backend.index_nplike
                 and parents.nplike is self._backend.index_nplike
             )
             self._handle_error(
                 self._backend[
                     "awkward_sorting_ranges_length",
-                    offsets_length.dtype.type,
+                    _offsets_length.dtype.type,
                     parents.dtype.type,
                 ](
-                    offsets_length.data,
+                    _offsets_length.data,
                     parents.data,
                     parents_length,
                 )
             )
-
-            offsets = ak.index.Index64.empty(
-                offsets_length[0], self._backend.index_nplike
+            offsets_length = self._backend.index_nplike.scalar_as_shape_item(
+                _offsets_length[0]
             )
+
+            offsets = ak.index.Index64.empty(offsets_length, self._backend.index_nplike)
 
             assert (
                 offsets.nplike is self._backend.index_nplike
@@ -967,7 +977,7 @@ class NumpyArray(Content):
                     parents.dtype.type,
                 ](
                     offsets.data,
-                    offsets_length[0],
+                    offsets_length,
                     parents.data,
                     parents_length,
                 )
@@ -991,7 +1001,7 @@ class NumpyArray(Content):
                     self._data,
                     self.shape[0],
                     offsets.data,
-                    offsets_length[0],
+                    offsets_length,
                     parents_length,
                     ascending,
                     stable,
@@ -1196,10 +1206,15 @@ class NumpyArray(Content):
     def _to_backend_array(self, allow_missing, backend):
         return to_nplike(self.data, backend.nplike, from_nplike=self._backend.nplike)
 
-    def _completely_flatten(self, backend, options):
+    def _remove_structure(self, backend, options):
+        if options["keepdims"]:
+            shape = (1,) * (self._data.ndim - 1) + (-1,)
+        else:
+            shape = (-1,)
         return [
             ak.contents.NumpyArray(
-                self._raw(backend.nplike).reshape(-1), backend=backend
+                backend.nplike.reshape(self._raw(backend.nplike), shape),
+                backend=backend,
             )
         ]
 
@@ -1248,6 +1263,11 @@ class NumpyArray(Content):
         return self.to_contiguous().to_RegularArray()
 
     def _to_list(self, behavior, json_conversions):
+        if not self._backend.nplike.known_data:
+            raise ak._errors.wrap_error(
+                TypeError("cannot convert typetracer arrays to Python lists")
+            )
+
         if self.parameter("__array__") == "byte":
             convert_bytes = (
                 None if json_conversions is None else json_conversions["convert_bytes"]

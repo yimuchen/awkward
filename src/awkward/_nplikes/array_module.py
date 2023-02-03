@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy
 
 import awkward as ak
-from awkward._nplikes.numpylike import ArrayLike, NumpyLike, NumpyMetadata
+from awkward._nplikes.numpylike import ArrayLike, NumpyLike, NumpyMetadata, ShapeItem
 from awkward.typing import Final, Literal, SupportsInt
 
 np = NumpyMetadata.instance()
@@ -115,6 +115,63 @@ class ArrayModuleNumpyLike(NumpyLike):
     def broadcast_arrays(self, *arrays: ArrayLike) -> list[ArrayLike]:
         return self._module.broadcast_arrays(*arrays)
 
+    def reshape(
+        self, x: ArrayLike, shape: tuple[int, ...], *, copy: bool | None = None
+    ) -> ArrayLike:
+        if copy is False:
+            raise ak._errors.wrap_error(
+                NotImplementedError(
+                    "reshape was called with copy=False, which is currently not supported"
+                )
+            )
+        result = x.reshape(shape)
+        if copy and self._module.shares_memory(x, result):
+            return self._module.copy(result)
+        else:
+            return result
+
+    def shape_item_as_scalar(self, x1: ShapeItem):
+        if x1 is None:
+            raise ak._errors.wrap_error(
+                TypeError("array module nplikes do not support unknown lengths")
+            )
+        elif isinstance(x1, int):
+            return self._module.asarray(x1, dtype=np.int64)
+        else:
+            raise ak._errors.wrap_error(
+                TypeError(f"expected None or int type, received {x1}")
+            )
+
+    def scalar_as_shape_item(self, x1) -> ShapeItem:
+        if x1 is None:
+            return None
+        else:
+            return int(x1)
+
+    def add_shape_item(self, x1: ShapeItem, x2: ShapeItem) -> ShapeItem:
+        assert x1 >= 0
+        assert x2 >= 0
+        return x1 + x2
+
+    def sub_shape_item(self, x1: ShapeItem, x2: ShapeItem) -> ShapeItem:
+        assert x1 >= 0
+        assert x2 >= 0
+        result = x1 - x2
+        assert result >= 0
+        return result
+
+    def mul_shape_item(self, x1: ShapeItem, x2: ShapeItem) -> ShapeItem:
+        assert x1 >= 0
+        assert x2 >= 0
+        return x1 * x2
+
+    def div_shape_item(self, x1: ShapeItem, x2: ShapeItem) -> ShapeItem:
+        assert x1 >= 0
+        assert x2 >= 0
+        result = x1 // x2
+        assert result * x2 == x1
+        return result
+
     def nonzero(self, x: ArrayLike) -> tuple[ArrayLike, ...]:
         return self._module.nonzero(x)
 
@@ -153,7 +210,7 @@ class ArrayModuleNumpyLike(NumpyLike):
         *,
         axis: int = 0,
     ) -> ArrayLike:
-        arrays = [x for x in arrays]
+        arrays = list(arrays)
         return self._module.stack(arrays, axis=axis)
 
     def packbits(
@@ -308,6 +365,11 @@ class ArrayModuleNumpyLike(NumpyLike):
             precision=precision,
             suppress_small=suppress_small,
         )
+
+    def astype(
+        self, x: ArrayLike, dtype: numpy.dtype, *, copy: bool | None = True
+    ) -> ArrayLike:
+        return x.astype(dtype, copy=copy)
 
     def can_cast(self, from_: np.dtype | ArrayLike, to: np.dtype | ArrayLike) -> bool:
         return self._module.can_cast(from_, to, casting="same_kind")

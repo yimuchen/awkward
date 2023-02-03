@@ -6,7 +6,17 @@ from abc import abstractmethod
 import numpy
 
 from awkward._singleton import Singleton
-from awkward.typing import Literal, Protocol, Self, SupportsIndex, SupportsInt, overload
+from awkward.typing import (
+    Literal,
+    Protocol,
+    Self,
+    SupportsIndex,
+    SupportsInt,  # noqa: F401
+    TypeAlias,
+    overload,
+)
+
+ShapeItem: TypeAlias = "SupportsInt | None"
 
 
 class ArrayLike(Protocol):
@@ -22,12 +32,12 @@ class ArrayLike(Protocol):
 
     @property
     @abstractmethod
-    def shape(self) -> tuple[SupportsInt, ...]:
+    def shape(self) -> tuple[ShapeItem, ...]:
         ...
 
     @property
     @abstractmethod
-    def size(self) -> SupportsInt:
+    def size(self) -> ShapeItem:
         ...
 
     @property
@@ -35,26 +45,27 @@ class ArrayLike(Protocol):
     def T(self) -> Self:
         ...
 
-    @overload
-    def __getitem__(self, key: SupportsIndex) -> int | float | complex | bool:
-        ...
-
-    @overload
+    @abstractmethod
     def __getitem__(  # noqa: F811
         self,
-        key: slice
+        key: SupportsIndex
+        | slice
         | Ellipsis
-        | tuple[SupportsIndex | slice | Ellipsis, ...]
+        | tuple[SupportsIndex | slice | Ellipsis | ArrayLike, ...]
         | ArrayLike,
     ) -> Self:
         ...
 
-    @abstractmethod
-    def __getitem__(self, key):  # noqa: F811
-        ...
-
     @overload
-    def __setitem__(self, key: SupportsIndex, value: int | float | bool | complex):
+    def __setitem__(
+        self,
+        key: SupportsIndex
+        | slice
+        | Ellipsis
+        | tuple[SupportsIndex | slice | Ellipsis | ArrayLike, ...]
+        | ArrayLike,
+        value: int | float | bool | complex | ArrayLike,
+    ):
         ...
 
     @overload
@@ -287,7 +298,37 @@ class NumpyLike(Singleton, Protocol):
         ...
 
     @abstractmethod
-    def broadcast_to(self, x: ArrayLike, shape: tuple[SupportsInt, ...]) -> ArrayLike:
+    def broadcast_to(self, x: ArrayLike, shape: tuple[ShapeItem, ...]) -> ArrayLike:
+        ...
+
+    @abstractmethod
+    def shape_item_as_scalar(self, x1: ShapeItem):
+        ...
+
+    @abstractmethod
+    def scalar_as_shape_item(self, x1) -> ShapeItem:
+        ...
+
+    @abstractmethod
+    def sub_shape_item(self, x1: ShapeItem, x2: ShapeItem) -> ShapeItem:
+        ...
+
+    @abstractmethod
+    def add_shape_item(self, x1: ShapeItem, x2: ShapeItem) -> ShapeItem:
+        ...
+
+    @abstractmethod
+    def mul_shape_item(self, x1: ShapeItem, x2: ShapeItem) -> ShapeItem:
+        ...
+
+    @abstractmethod
+    def div_shape_item(self, x1: ShapeItem, x2: ShapeItem) -> ShapeItem:
+        ...
+
+    @abstractmethod
+    def reshape(
+        self, x: ArrayLike, shape: tuple[int, ...], *, copy: bool | None = None
+    ) -> ArrayLike:
         ...
 
     @abstractmethod
@@ -490,6 +531,12 @@ class NumpyLike(Singleton, Protocol):
         precision: int | None = None,
         suppress_small: bool | None = None,
     ):
+        ...
+
+    @abstractmethod
+    def astype(
+        self, x: ArrayLike, dtype: numpy.dtype, *, copy: bool | None = True
+    ) -> ArrayLike:
         ...
 
     @abstractmethod

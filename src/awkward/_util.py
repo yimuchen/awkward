@@ -37,7 +37,7 @@ def parse_version(version):
 
 
 def numpy_at_least(version):
-    import numpy  # noqa: I251
+    import numpy  # noqa: TID251
 
     return parse_version(numpy.__version__) >= parse_version(version)
 
@@ -538,7 +538,7 @@ def union_to_record(unionarray, anonymous):
                 )
             )
 
-        return ak.contents.RecordArray(all_fields, all_names, len(unionarray))
+        return ak.contents.RecordArray(all_fields, all_names, unionarray.length)
 
 
 def direct_Content_subclass(node):
@@ -555,55 +555,6 @@ def direct_Content_subclass_name(node):
         return None
     else:
         return out.__name__
-
-
-meaningful_parameters = frozenset(
-    {
-        ("__array__", "string"),
-        ("__array__", "bytestring"),
-        ("__array__", "char"),
-        ("__array__", "byte"),
-        ("__array__", "sorted_map"),
-        ("__array__", "categorical"),
-    }
-)
-
-
-def merge_parameters(one, two, merge_equal=False, exclude=()):
-    if one is None and two is None:
-        return None
-
-    if len(exclude) != 0:
-        if one is None:
-            one = {}
-        if two is None:
-            two = {}
-
-    if one is None:
-        return two
-
-    elif two is None:
-        return one
-
-    elif merge_equal:
-        out = {}
-        for k, v in two.items():
-            if k in one.keys():
-                if len(exclude) == 0 or (k, v) not in exclude:
-                    if v == one[k]:
-                        out[k] = v
-        return out
-
-    else:
-        if len(exclude) != 0:
-            out = {k: v for k, v in one.items() if (k, v) not in exclude}
-        else:
-            out = dict(one)
-        for k, v in two.items():
-            if len(exclude) == 0 or (k, v) not in exclude:
-                if v is not None:
-                    out[k] = v
-        return out
 
 
 def expand_braces(text, seen=None):
@@ -636,26 +587,30 @@ def from_arraylib(array, regulararray, recordarray, highlevel, behavior):
     numpy = Numpy.instance()
 
     def recurse(array, mask=None):
+        nplike = nplike_of(array)
+
         if Jax.is_tracer(array):
             raise ak._errors.wrap_error(
                 TypeError("Jax tracers cannot be used with `ak.from_arraylib`")
             )
 
         if regulararray and len(array.shape) > 1:
+            new_shape = (-1,) + array.shape[2:]
             return ak.contents.RegularArray(
-                recurse(array.reshape((-1,) + array.shape[2:]), mask),
+                recurse(nplike.reshape(array, new_shape), mask),
                 array.shape[1],
                 array.shape[0],
             )
 
         if len(array.shape) == 0:
-            array = ak.contents.NumpyArray(array.reshape(1))
+            array = nplike.reshape(array, (1,))
 
         if array.dtype.kind == "S":
+            assert nplike is numpy
             asbytes = array.reshape(-1)
             itemsize = asbytes.dtype.itemsize
             starts = numpy.arange(0, len(asbytes) * itemsize, itemsize, dtype=np.int64)
-            stops = starts + numpy.char.str_len(asbytes)
+            stops = numpy.add(starts, numpy.char.str_len(asbytes))
             data = ak.contents.ListArray(
                 ak.index.Index64(starts),
                 ak.index.Index64(stops),
@@ -672,10 +627,11 @@ def from_arraylib(array, regulararray, recordarray, highlevel, behavior):
                 )
 
         elif array.dtype.kind == "U":
+            assert nplike is numpy
             asbytes = numpy.char.encode(array.reshape(-1), "utf-8", "surrogateescape")
             itemsize = asbytes.dtype.itemsize
             starts = numpy.arange(0, len(asbytes) * itemsize, itemsize, dtype=np.int64)
-            stops = starts + numpy.char.str_len(asbytes)
+            stops = numpy.add(starts, numpy.char.str_len(asbytes))
             data = ak.contents.ListArray(
                 ak.index.Index64(starts),
                 ak.index.Index64(stops),
@@ -718,8 +674,6 @@ def from_arraylib(array, regulararray, recordarray, highlevel, behavior):
             return ak.contents.ByteMaskedArray(
                 ak.index.Index8(mask), data, valid_when=False
             )
-
-        return data
 
     if isinstance(array, numpy.ma.MaskedArray):
         mask = numpy.ma.getmask(array)
@@ -768,6 +722,7 @@ def arrays_approx_equal(
     atol: float = 1e-8,
     dtype_exact: bool = True,
     check_parameters=True,
+    check_regular=True,
 ) -> bool:
     # TODO: this should not be needed after refactoring nplike mechanism
     import awkward.forms.form
@@ -794,8 +749,14 @@ def arrays_approx_equal(
         if right.is_option:
             right = right.to_IndexedOptionArray64()
 
-        if not type(left) is type(right):
-            return False
+        if type(left) is not type(right):
+            if not check_regular and (
+                left.is_list and right.is_regular or left.is_regular and right.is_list
+            ):
+                left = left.to_ListOffsetArray64()
+                right = right.to_ListOffsetArray64()
+            else:
+                return False
 
         if left.length != right.length:
             return False
@@ -858,12 +819,12 @@ def arrays_approx_equal(
 
 
 try:
-    import numpy  # noqa: I251
+    import numpy  # noqa: TID251
 
     NDArrayOperatorsMixin = numpy.lib.mixins.NDArrayOperatorsMixin
 
 except AttributeError:
-    from numpy.core import umath as um
+    from numpy.core import umath as um  # noqa: TID251
 
     def _disables_array_ufunc(obj):
         try:

@@ -8,14 +8,12 @@ from numbers import Complex, Real
 
 import awkward as ak
 from awkward._backends import Backend
+from awkward._nplikes import to_nplike
 from awkward._nplikes.numpy import Numpy
-from awkward._nplikes.numpylike import NumpyMetadata
-from awkward._nplikes.typetracer import (
-    TypeTracer,
-    ensure_known_scalar,
-    is_unknown_length,
-)
-from awkward.forms.form import Form, _parameters_equal
+from awkward._nplikes.numpylike import NumpyLike, NumpyMetadata, ShapeItem
+from awkward._nplikes.typetracer import TypeTracer
+from awkward._util import unset
+from awkward.forms.form import Form, JSONMapping, _type_parameters_equal
 from awkward.typing import Any, AxisMaybeNone, Literal, Self, TypeAlias, TypedDict
 
 np = NumpyMetadata.instance()
@@ -195,7 +193,7 @@ class Content:
         raise ak._errors.wrap_error(NotImplementedError)
 
     @property
-    def length(self) -> int:
+    def length(self) -> ShapeItem:
         raise ak._errors.wrap_error(NotImplementedError)
 
     def _to_buffers(
@@ -209,7 +207,7 @@ class Content:
         raise ak._errors.wrap_error(NotImplementedError)
 
     def __len__(self) -> int:
-        return self.length
+        return int(self.length)
 
     def _repr_extra(self, indent: str) -> list[str]:
         out = []
@@ -355,12 +353,13 @@ class Content:
         length: int,
     ):
         # if this is in a tuple-slice and really should be 0, it will be trimmed later
-        length = 1 if ensure_known_scalar(length == 0, False) else length
+        length = 1 if length is not None and length == 0 else length
         index = ak.index.Index64(head.index, nplike=self._backend.index_nplike)
         indexlength = index.length
         index = index.to_nplike(self._backend.index_nplike)
         outindex = ak.index.Index64.empty(
-            index.length * length, self._backend.index_nplike
+            self._backend.index_nplike.mul_shape_item(index.length, length),
+            self._backend.index_nplike,
         )
 
         assert (
@@ -500,7 +499,6 @@ class Content:
             return ak.contents.RecordArray(
                 contents,
                 nextcontent._fields,
-                None,
                 parameters=self._parameters,
                 backend=self._backend,
             )
@@ -545,14 +543,14 @@ class Content:
 
             next = ak.contents.RegularArray(
                 self,
-                self.length if self._backend.nplike.known_shape else 1,
+                self.length,
                 1,
                 parameters=None,
             )
 
             out = next._getitem_next(nextwhere[0], nextwhere[1:], None)
 
-            if ensure_known_scalar(out.length == 0, False):
+            if out.length is not None and out.length == 0:
                 return out._getitem_nothing()
             else:
                 return out._getitem_at(0)
@@ -560,33 +558,46 @@ class Content:
         elif isinstance(where, ak.highlevel.Array):
             return self._getitem(where.layout)
 
+        # Convert between nplikes of different backends
         elif (
-            isinstance(where, Content)
-            and where._parameters is not None
-            and (where._parameters.get("__array__") in ("string", "bytestring"))
+            isinstance(where, ak.contents.Content)
+            and where.backend is not self._backend
         ):
-            return self._getitem_fields(ak.operations.to_list(where))
-
-        elif isinstance(where, ak.contents.EmptyArray):
-            return where.to_NumpyArray(np.int64)
+            common_backend = ak._backends.common_backend([where.backend, self._backend])
+            return self.to_backend(common_backend)._getitem(
+                where.to_backend(common_backend)
+            )
 
         elif isinstance(where, ak.contents.NumpyArray):
-            if issubclass(where.dtype.type, np.int64):
-                carry = ak.index.Index64(where.data.reshape(-1))
+            data_as_index = to_nplike(
+                where.data,
+                self._backend.index_nplike,
+                from_nplike=self._backend.nplike,
+            )
+            if np.issubdtype(where.dtype, np.int64):
                 allow_lazy = True
-            elif issubclass(where.dtype.type, np.integer):
                 carry = ak.index.Index64(
-                    where.data.astype(np.int64).reshape(-1),
+                    self._backend.index_nplike.reshape(data_as_index, (-1,)),
                     nplike=self._backend.index_nplike,
                 )
+            elif np.issubdtype(where.dtype, np.integer):
                 allow_lazy = "copied"  # True, but also can be modified in-place
-            elif issubclass(where.dtype.type, (np.bool_, bool)):
+                carry = ak.index.Index64(
+                    self._backend.index_nplike.reshape(
+                        self._backend.index_nplike.astype(
+                            data_as_index, dtype=np.int64, copy=True
+                        ),
+                        (-1,),
+                    ),
+                    nplike=self._backend.index_nplike,
+                )
+            elif np.issubdtype(where.dtype, np.bool_):
                 if len(where.data.shape) == 1:
-                    where = self._backend.nplike.nonzero(where.data)[0]
+                    where = self._backend.index_nplike.nonzero(data_as_index)[0]
                     carry = ak.index.Index64(where, nplike=self._backend.index_nplike)
                     allow_lazy = "copied"  # True, but also can be modified in-place
                 else:
-                    wheres = self._backend.nplike.nonzero(where.data)
+                    wheres = self._backend.index_nplike.nonzero(data_as_index)
                     return self._getitem(wheres)
             else:
                 raise ak._errors.wrap_error(
@@ -600,29 +611,65 @@ class Content:
             out = ak._slicing.getitem_next_array_wrap(
                 self._carry(carry, allow_lazy), where.shape
             )
-            if ensure_known_scalar(out.length == 0, False):
+            if out.length is not None and out.length == 0:
                 return out._getitem_nothing()
             else:
                 return out._getitem_at(0)
 
+        elif isinstance(where, ak.contents.RegularArray):
+            maybe_numpy = where.maybe_to_NumpyArray()
+            if maybe_numpy is None:
+                return self._getitem((where,))
+            else:
+                return self._getitem(maybe_numpy)
+
+        # Awkward Array of strings
+        elif (
+            isinstance(where, Content)
+            and where._parameters is not None
+            and (where._parameters.get("__array__") in ("string", "bytestring"))
+        ):
+            return self._getitem_fields(ak.operations.to_list(where))
+
+        elif isinstance(where, ak.contents.EmptyArray):
+            return where.to_NumpyArray(np.int64)
+
         elif isinstance(where, Content):
             return self._getitem((where,))
 
-        elif ak._util.is_sized_iterable(where) and len(where) == 0:
-            return self._carry(
-                ak.index.Index64.empty(0, self._backend.index_nplike),
-                allow_lazy=True,
-            )
-
-        elif ak._util.is_sized_iterable(where) and all(
-            isinstance(x, str) for x in where
-        ):
-            return self._getitem_fields(where)
-
         elif ak._util.is_sized_iterable(where):
-            layout = ak.operations.to_layout(where)
-            as_numpy = layout.maybe_to_NumpyArray() or layout
-            return self._getitem(as_numpy)
+            # Do we have an array
+            nplike = ak._nplikes.nplike_of(where, default=None)
+            # We can end up with non-array objects associated with an nplike
+            if nplike is not None and nplike.is_own_array(where):
+                # Is it a scalar, not array?
+                if len(where.shape) == 0:
+                    raise ak._errors.wrap_error(
+                        NotImplementedError(
+                            "scalar arrays in slices are not currently supported"
+                        )
+                    )
+                else:
+                    layout = ak.operations.ak_to_layout._impl(
+                        where, allow_record=False, allow_other=True, regulararray=False
+                    )
+                    return self._getitem(layout)
+
+            elif len(where) == 0:
+                return self._carry(
+                    ak.index.Index64.empty(0, self._backend.index_nplike),
+                    allow_lazy=True,
+                )
+            # Normally we would be worried about np.array et al. being treated
+            # as sized iterables instead of arrays. However, the first two cases
+            # here will only iterate over the entire array if it contains strings,
+            # at which point we need to visit each item anyway
+            elif all(isinstance(x, str) for x in where):
+                return self._getitem_fields(list(where))
+
+            else:
+                layout = ak.operations.to_layout(where)
+                return self._getitem(layout)
 
         else:
             raise ak._errors.wrap_error(
@@ -689,28 +736,16 @@ class Content:
             )
         )
         return ak.contents.NumpyArray(
-            localindex, parameters=None, backend=self._backend
+            localindex.data, parameters=None, backend=self._backend
         )
-
-    def _mergeable(self, other: Content, mergebool: bool = True) -> bool:
-        # Is the other content is an identity, or a union?
-        if other.is_identity_like or other.is_union:
-            return True
-        # Otherwise, do the parameters match? If not, we can't merge.
-        elif not (
-            _parameters_equal(
-                self._parameters, other._parameters, only_array_record=True
-            )
-        ):
-            return False
-        # Finally, fall back upon the per-content implementation
-        else:
-            return self._mergeable_next(other, mergebool)
 
     def _mergeable_next(self, other: Content, mergebool: bool) -> bool:
         raise ak._errors.wrap_error(NotImplementedError)
 
-    def _mergemany(self, others: list[Content]) -> Content:
+    def _mergemany(
+        self,
+        others: list[Content],
+    ) -> Content:
         raise ak._errors.wrap_error(NotImplementedError)
 
     def _merging_strategy(
@@ -812,7 +847,7 @@ class Content:
         if replacement:
             size = size + (n - 1)
         thisn = n
-        if is_unknown_length(thisn) or is_unknown_length(size):
+        if thisn is None or size is None:
             combinationslen = size  # not actually size, just an unknown value
         else:
             if thisn > size:
@@ -865,13 +900,13 @@ class Content:
             )
         )
         contents = []
-        length = None
+        length = ak._util.unset
         for ptr in tocarry:
             contents.append(
                 ak.contents.IndexedArray.simplified(ptr, self, parameters=None)
             )
             length = contents[-1].length
-        assert length is not None
+        assert not (length is ak._util.unset and self._backend.nplike.known_shape)
         return ak.contents.RecordArray(
             contents, recordlookup, length, parameters=parameters, backend=self._backend
         )
@@ -956,7 +991,7 @@ class Content:
         return self.form_cls.dimension_optiontype.__get__(self)
 
     def _pad_none_axis0(self, target: int, clip: bool) -> Content:
-        if not clip and ensure_known_scalar(target < self.length, False):
+        if not clip and (self.length is None or (target < self.length)):
             index = ak.index.Index64(
                 self._backend.index_nplike.arange(self.length, dtype=np.int64),
                 nplike=self._backend.index_nplike,
@@ -1049,7 +1084,7 @@ class Content:
     def _drop_none(self) -> Content:
         raise ak._errors.wrap_error(NotImplementedError)
 
-    def _completely_flatten(self, backend, options):
+    def _remove_structure(self, backend, options):
         raise ak._errors.wrap_error(NotImplementedError)
 
     def _recursively_apply(
@@ -1219,7 +1254,10 @@ class Content:
             backend = self._backend
         else:
             backend = ak._backends.regularize_backend(backend)
-        return self._to_backend(backend)
+        if backend is self._backend:
+            return self
+        else:
+            return self._to_backend(backend)
 
     def _to_backend(self, backend: Backend) -> Self:
         raise ak._errors.wrap_error(NotImplementedError)
@@ -1248,9 +1286,7 @@ class Content:
         return (
             self.__class__ is other.__class__
             and len(self) == len(other)
-            and _parameters_equal(
-                self.parameters, other.parameters, only_array_record=False
-            )
+            and _type_parameters_equal(self.parameters, other.parameters)
             and self._is_equal_to(other, index_dtype, numpyarray)
         )
 
@@ -1266,5 +1302,5 @@ class Content:
     def _fill_none(self, value: Content) -> Content:
         raise ak._errors.wrap_error(NotImplementedError)
 
-    def copy(self) -> Self:
+    def copy(self, *, parameters: JSONMapping | None = unset) -> Self:
         raise ak._errors.wrap_error(NotImplementedError)

@@ -8,17 +8,12 @@ import math
 import awkward as ak
 from awkward._nplikes.numpy import Numpy
 from awkward._nplikes.numpylike import NumpyMetadata
-from awkward._nplikes.typetracer import (
-    MaybeNone,
-    TypeTracer,
-    UnknownLength,
-    ensure_known_scalar,
-    is_unknown_length,
-)
+from awkward._nplikes.typetracer import MaybeNone, TypeTracer
 from awkward._util import unset
 from awkward.contents.bytemaskedarray import ByteMaskedArray
 from awkward.contents.content import Content
 from awkward.forms.bitmaskedform import BitMaskedForm
+from awkward.forms.form import _type_parameters_equal
 from awkward.index import Index
 from awkward.typing import Final, Self, final
 
@@ -65,7 +60,7 @@ class BitMaskedArray(Content):
                     )
                 )
             )
-        if not is_unknown_length(length):
+        if length is not None:
             if not (ak._util.is_integer(length) and length >= 0):
                 raise ak._errors.wrap_error(
                     TypeError(
@@ -82,7 +77,7 @@ class BitMaskedArray(Content):
                     )
                 )
             )
-        if ensure_known_scalar(length > mask.length * 8, False):
+        if not (length is None or mask.length is None) and length > mask.length * 8:
             raise ak._errors.wrap_error(
                 ValueError(
                     "{} 'length' ({}) must be <= len(mask) * 8 ({})".format(
@@ -90,7 +85,10 @@ class BitMaskedArray(Content):
                     )
                 )
             )
-        if ensure_known_scalar(length > content.length, False):
+        if (
+            not (length is None or content.length is None)
+            and length > content.length * 8
+        ):
             raise ak._errors.wrap_error(
                 ValueError(
                     "{} 'length' ({}) must be <= len(content) ({})".format(
@@ -223,7 +221,7 @@ class BitMaskedArray(Content):
             self._mask.to_nplike(tt),
             self._content._to_typetracer(False),
             self._valid_when,
-            UnknownLength if forget_length else self.length,
+            None if forget_length else self.length,
             self._lsb_order,
             parameters=self._parameters,
         )
@@ -464,20 +462,16 @@ class BitMaskedArray(Content):
         return self.to_ByteMaskedArray._offsets_and_flattened(axis, depth)
 
     def _mergeable_next(self, other, mergebool):
-        if isinstance(
-            other,
-            (
-                ak.contents.IndexedArray,
-                ak.contents.IndexedOptionArray,
-                ak.contents.ByteMaskedArray,
-                ak.contents.BitMaskedArray,
-                ak.contents.UnmaskedArray,
-            ),
-        ):
-            return self._content._mergeable(other.content, mergebool)
-
+        # Is the other content is an identity, or a union?
+        if other.is_identity_like or other.is_union:
+            return True
+        # We can only combine option types whose array-record parameters agree
+        elif other.is_option or other.is_indexed:
+            return self._content._mergeable_next(
+                other.content, mergebool
+            ) and _type_parameters_equal(self._parameters, other._parameters)
         else:
-            return self._content._mergeable(other, mergebool)
+            return self._content._mergeable_next(other, mergebool)
 
     def _reverse_merge(self, other):
         return self.to_IndexedOptionArray64()._reverse_merge(other)
@@ -588,10 +582,10 @@ class BitMaskedArray(Content):
     def _to_backend_array(self, allow_missing, backend):
         return self.to_ByteMaskedArray()._to_backend_array(allow_missing, backend)
 
-    def _completely_flatten(self, backend, options):
+    def _remove_structure(self, backend, options):
         branch, depth = self.branch_depth
         if branch or options["drop_nones"] or depth > 1:
-            return self.project()._completely_flatten(backend, options)
+            return self.project()._remove_structure(backend, options)
         else:
             return [self]
 
@@ -692,6 +686,11 @@ class BitMaskedArray(Content):
             )
 
     def _to_list(self, behavior, json_conversions):
+        if not self._backend.nplike.known_data:
+            raise ak._errors.wrap_error(
+                TypeError("cannot convert typetracer arrays to Python lists")
+            )
+
         out = self._to_list_custom(behavior, json_conversions)
         if out is not None:
             return out

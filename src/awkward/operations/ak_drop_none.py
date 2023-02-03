@@ -40,7 +40,7 @@ def drop_none(array, axis=None, highlevel=True, behavior=None):
     """
     with ak._errors.OperationErrorContext(
         "ak.drop_none",
-        dict(array=array, axis=axis, highlevel=highlevel, behavior=behavior),
+        {"array": array, "axis": axis, "highlevel": highlevel, "behavior": behavior},
     ):
         return _impl(array, axis, highlevel, behavior)
 
@@ -102,7 +102,7 @@ def _impl(array, axis, highlevel, behavior):
                 else:
                     return layout.drop_none()
             if posaxis == depth - 1 and layout.is_option:
-                _, _, none_indexes = layout._nextcarry_outindex(layout.backend)
+                _, _, none_indexes = layout._nextcarry_outindex()
                 options["none_indexes"].append(none_indexes)
                 return layout.drop_none()
             if posaxis == depth - 1 and layout.is_list and layout.content.is_option:

@@ -36,13 +36,13 @@ def to_numpy(array, *, allow_missing=True):
     """
     with ak._errors.OperationErrorContext(
         "ak.to_numpy",
-        dict(array=array, allow_missing=allow_missing),
+        {"array": array, "allow_missing": allow_missing},
     ):
         return _impl(array, allow_missing)
 
 
 def _impl(array, allow_missing):
-    import numpy  # noqa: I251
+    import numpy  # noqa: TID251
 
     with numpy.errstate(invalid="ignore"):
         layout = ak.to_layout(array, allow_record=False)

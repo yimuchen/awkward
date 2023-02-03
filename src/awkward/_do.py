@@ -217,37 +217,40 @@ def pad_none(
     return layout._pad_none(length, axis, 1, clip)
 
 
-def completely_flatten(
+def remove_structure(
     layout: Content | Record,
-    backend: ak._backends.Backend | None = None,
+    backend: Backend | None = None,
     flatten_records: bool = True,
     function_name: str | None = None,
     drop_nones: bool = True,
+    keepdims: bool = False,
 ):
     if isinstance(layout, Record):
-        return completely_flatten(
+        return remove_structure(
             layout._array[layout._at : layout._at + 1],
             backend,
             flatten_records,
             function_name,
             drop_nones,
+            keepdims,
         )
 
     else:
         if backend is None:
             backend = layout._backend
-        arrays = layout._completely_flatten(
+        arrays = layout._remove_structure(
             backend,
             {
                 "flatten_records": flatten_records,
                 "function_name": function_name,
                 "drop_nones": drop_nones,
+                "keepdims": keepdims,
             },
         )
         return tuple(arrays)
 
 
-def flatten(layout: Content, axis: Integral = 1) -> Content:
+def flatten(layout: Content, axis: int = 1) -> Content:
     offsets, flattened = layout._offsets_and_flattened(axis, 1)
     return flattened
 
@@ -265,34 +268,40 @@ def num(layout, axis):
 
 
 def mergeable(one: Content, two: Content, mergebool: bool = True) -> bool:
-    return one._mergeable(two, mergebool=mergebool)
+    return one._mergeable_next(two, mergebool=mergebool)
 
 
 def merge_as_union(one: Content, two: Content) -> ak.contents.UnionArray:
     mylength = one.length
     theirlength = two.length
-    tags = ak.index.Index8.empty((mylength + theirlength), one._backend.index_nplike)
-    index = ak.index.Index64.empty((mylength + theirlength), one._backend.index_nplike)
+    tags = ak.index.Index8.empty(
+        one.backend.index_nplike.add_shape_item(mylength, theirlength),
+        one.backend.index_nplike,
+    )
+    index = ak.index.Index64.empty(
+        one.backend.index_nplike.add_shape_item(mylength, theirlength),
+        one.backend.index_nplike,
+    )
     contents = [one, two]
-    assert tags.nplike is one._backend.index_nplike
+    assert tags.nplike is one.backend.index_nplike
     one._handle_error(
-        one._backend["awkward_UnionArray_filltags_const", tags.dtype.type](
+        one.backend["awkward_UnionArray_filltags_const", tags.dtype.type](
             tags.data, 0, mylength, 0
         )
     )
-    assert index.nplike is one._backend.index_nplike
+    assert index.nplike is one.backend.index_nplike
     one._handle_error(
-        one._backend["awkward_UnionArray_fillindex_count", index.dtype.type](
+        one.backend["awkward_UnionArray_fillindex_count", index.dtype.type](
             index.data, 0, mylength
         )
     )
     one._handle_error(
-        one._backend["awkward_UnionArray_filltags_const", tags.dtype.type](
+        one.backend["awkward_UnionArray_filltags_const", tags.dtype.type](
             tags.data, mylength, theirlength, 1
         )
     )
     one._handle_error(
-        one._backend["awkward_UnionArray_fillindex_count", index.dtype.type](
+        one.backend["awkward_UnionArray_fillindex_count", index.dtype.type](
             index.data, mylength, theirlength
         )
     )
@@ -314,15 +323,16 @@ def reduce(
     behavior: dict | None = None,
 ):
     if axis is None:
-        parts = completely_flatten(layout, flatten_records=False, drop_nones=False)
+        parts = remove_structure(
+            layout, flatten_records=False, drop_nones=False, keepdims=keepdims
+        )
 
         if len(parts) > 1:
             # We know that `flatten_records` must fail, so the only other type
             # that can return multiple parts here is the union array
             raise ak._errors.wrap_error(
                 ValueError(
-                    "cannot use axis=None with keepdims=True on an array containing "
-                    "irreducible unions"
+                    "cannot use axis=None on an array containing irreducible unions"
                 )
             )
         elif len(parts) == 0:
@@ -344,7 +354,6 @@ def reduce(
             keepdims,
             behavior,
         )
-
         return next[0]
     else:
         negaxis = -axis
