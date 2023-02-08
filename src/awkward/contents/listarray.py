@@ -12,7 +12,10 @@ from awkward.contents.listoffsetarray import ListOffsetArray
 from awkward.forms.form import _type_parameters_equal
 from awkward.forms.listform import ListForm
 from awkward.index import Index
-from awkward.typing import Final, Self, final
+from awkward.typing import TYPE_CHECKING, Final, Self, SupportsIndex, final
+
+if TYPE_CHECKING:
+    from awkward._slicing import SliceItem
 
 np = NumpyMetadata.instance()
 
@@ -232,7 +235,7 @@ class ListArray(Content):
     def _getitem_nothing(self):
         return self._content._getitem_range(slice(0, 0))
 
-    def _getitem_at(self, where):
+    def _getitem_at(self, where: SupportsIndex):
         if not self._backend.nplike.known_data:
             self._touch_data(recursive=False)
             return self._content._getitem_range(slice(0, 0))
@@ -258,7 +261,9 @@ class ListArray(Content):
             parameters=self._parameters,
         )
 
-    def _getitem_field(self, where, only_fields=()):
+    def _getitem_field(
+        self, where: str | SupportsIndex, only_fields: tuple[str, ...] = ()
+    ) -> Content:
         return ListArray(
             self._starts,
             self._stops,
@@ -266,7 +271,9 @@ class ListArray(Content):
             parameters=None,
         )
 
-    def _getitem_fields(self, where, only_fields=()):
+    def _getitem_fields(
+        self, where: list[str | SupportsIndex], only_fields: tuple[str, ...] = ()
+    ) -> Content:
         return ListArray(
             self._starts,
             self._stops,
@@ -274,7 +281,7 @@ class ListArray(Content):
             parameters=None,
         )
 
-    def _carry(self, carry, allow_lazy):
+    def _carry(self, carry: Index, allow_lazy: bool) -> Content:
         assert isinstance(carry, ak.index.Index)
 
         try:
@@ -582,7 +589,12 @@ class ListArray(Content):
                 )
             )
 
-    def _getitem_next(self, head, tail, advanced):
+    def _getitem_next(
+        self,
+        head: SliceItem | tuple,
+        tail: tuple[SliceItem, ...],
+        advanced: Index | None,
+    ) -> Content:
         if head == ():
             return self
 
@@ -1157,11 +1169,11 @@ class ListArray(Content):
                 self._content._local_index(axis, depth + 1),
             )
 
-    def _numbers_to_type(self, name):
+    def _numbers_to_type(self, name, including_unknown):
         return ak.contents.ListArray(
             self._starts,
             self._stops,
-            self._content._numbers_to_type(name),
+            self._content._numbers_to_type(name, including_unknown),
             parameters=self._parameters,
         )
 
@@ -1395,7 +1407,7 @@ class ListArray(Content):
             and self._backend.nplike.known_data
             and self._starts.length != 0
         ):
-            startsmin = self._backend.index_nplike.min(self._starts.data).item()
+            startsmin = self._backend.index_nplike.min(self._starts.data)
             starts = ak.index.Index(
                 self._starts.data - startsmin, nplike=self._backend.index_nplike
             )
@@ -1403,7 +1415,7 @@ class ListArray(Content):
                 self._stops.data - startsmin, nplike=self._backend.index_nplike
             )
             content = self._content[
-                startsmin : self._backend.index_nplike.max(self._stops.data).item()
+                startsmin : self._backend.index_nplike.max(self._stops.data)
             ]
         else:
             self._touch_data(recursive=False)

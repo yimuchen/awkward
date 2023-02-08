@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "awkward"
-version = "2.0.6"
+version = "2.0.7"
 description = "Manipulate JSON-like data with NumPy-like idioms."
 license = { text = "BSD-3-Clause" }
 requires-python = ">=3.7"
@@ -40,7 +40,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "awkward_cpp==7",
+    "awkward_cpp==8",
     "importlib_resources;python_version < \"3.9\"",
     "numpy>=1.14.5",
     "packaging",
@@ -64,7 +64,7 @@ init = "awkward.numba:_register"
 
 [tool.hatch.build]
 artifacts = [
-    "src/awkward/_connect/header-only"
+    "/src/awkward/_connect/header-only"
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -78,13 +78,15 @@ include = [
     "/src",
     "/tests",
     "/tests-cuda",
-    "/tests-cuda-kernels",
     "/docs-img",
     "/docs",
     "/CITATION.cff",
     "/CONTRIBUTING.md",
     "/README.md",
     "/requirements-test.txt"
+]
+artefacts = [
+    "/tests-cuda-kernels",
 ]
 
 [tool.hatch.metadata.hooks.fancy-pypi-readme]

@@ -12,7 +12,10 @@ from awkward.contents.content import Content
 from awkward.forms.form import _type_parameters_equal
 from awkward.forms.listoffsetform import ListOffsetForm
 from awkward.index import Index
-from awkward.typing import Final, Self, final
+from awkward.typing import TYPE_CHECKING, Final, Self, SupportsIndex, final
+
+if TYPE_CHECKING:
+    from awkward._slicing import SliceItem
 
 np = NumpyMetadata.instance()
 numpy = Numpy.instance()
@@ -204,31 +207,32 @@ class ListOffsetArray(Content):
     def to_RegularArray(self):
         start, stop = self._offsets[0], self._offsets[self._offsets.length - 1]
         content = self._content._getitem_range(slice(start, stop))
-        size = ak.index.Index64.empty(1, self._backend.index_nplike)
+        _size = ak.index.Index64.empty(1, self._backend.index_nplike)
         assert (
-            size.nplike is self._backend.index_nplike
+            _size.nplike is self._backend.index_nplike
             and self._offsets.nplike is self._backend.index_nplike
         )
         self._handle_error(
             self._backend[
                 "awkward_ListOffsetArray_toRegularArray",
-                size.dtype.type,
+                _size.dtype.type,
                 self._offsets.dtype.type,
             ](
-                size.data,
+                _size.data,
                 self._offsets.data,
                 self._offsets.length,
             )
         )
-
+        size = self._backend.index_nplike.scalar_as_shape_item(_size[0])
+        length = self._backend.index_nplike.sub_shape_item(self._offsets.length, 1)
         return ak.contents.RegularArray(
-            content, size[0], self._offsets.length - 1, parameters=self._parameters
+            content, size, length, parameters=self._parameters
         )
 
     def _getitem_nothing(self):
         return self._content._getitem_range(slice(0, 0))
 
-    def _getitem_at(self, where):
+    def _getitem_at(self, where: SupportsIndex):
         if not self._backend.nplike.known_data:
             self._touch_data(recursive=False)
             return self._content._getitem_range(slice(0, 0))
@@ -254,21 +258,25 @@ class ListOffsetArray(Content):
             )
         return ListOffsetArray(offsets, self._content, parameters=self._parameters)
 
-    def _getitem_field(self, where, only_fields=()):
+    def _getitem_field(
+        self, where: str | SupportsIndex, only_fields: tuple[str, ...] = ()
+    ) -> Content:
         return ListOffsetArray(
             self._offsets,
             self._content._getitem_field(where, only_fields),
             parameters=None,
         )
 
-    def _getitem_fields(self, where, only_fields=()):
+    def _getitem_fields(
+        self, where: list[str | SupportsIndex], only_fields: tuple[str, ...] = ()
+    ) -> Content:
         return ListOffsetArray(
             self._offsets,
             self._content._getitem_fields(where, only_fields),
             parameters=None,
         )
 
-    def _carry(self, carry, allow_lazy):
+    def _carry(self, carry: Index, allow_lazy: bool) -> Content:
         assert isinstance(carry, ak.index.Index)
 
         try:
@@ -352,7 +360,12 @@ class ListOffsetArray(Content):
         )
         return out._getitem_next_jagged(slicestarts, slicestops, slicecontent, tail)
 
-    def _getitem_next(self, head, tail, advanced):
+    def _getitem_next(
+        self,
+        head: SliceItem | tuple,
+        tail: tuple[SliceItem, ...],
+        advanced: Index | None,
+    ) -> Content:
         advanced = advanced.to_nplike(self._backend.nplike)
         if head == ():
             return self
@@ -780,10 +793,10 @@ class ListOffsetArray(Content):
                 self._offsets, self._content._local_index(axis, depth + 1)
             )
 
-    def _numbers_to_type(self, name):
+    def _numbers_to_type(self, name, including_unknown):
         return ak.contents.ListOffsetArray(
             self._offsets,
-            self._content._numbers_to_type(name),
+            self._content._numbers_to_type(name, including_unknown),
             parameters=self._parameters,
         )
 
