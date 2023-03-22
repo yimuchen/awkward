@@ -11,7 +11,7 @@ kernelspec:
   name: python3
 ---
 
-Using arrays in cppyy
+Using arrays in C++
 =====================
 
 ```{tableofcontents}

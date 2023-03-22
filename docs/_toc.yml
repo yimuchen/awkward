@@ -38,8 +38,6 @@ subtrees:
                         title: "ROOT via Uproot"
                       - file: user-guide/how-to-convert-rdataframe
                         title: "ROOT via RDataFrame"
-                      - file: user-guide/how-to-convert-cppyy
-                        title: "Awkward Arrays acceleration with JIT-compilation in cppyy"
 
               - file: user-guide/how-to-create
                 title: "Creating new arrays"
@@ -133,13 +131,6 @@ subtrees:
                       - file: user-guide/how-to-combinatorics-best-match
                         title: "Best match between collections [todo]"
 
-              - file: user-guide/how-to-use-in-cppyy
-                title: "Awkward Arrays acceleration with JIT-compilation in cppyy"
-                subtrees:
-                  - entries:
-                      - file: user-guide/how-to-use-in-cppyy-features
-                        title: "Supported features"
-
               - file: user-guide/how-to-use-in-numba
                 title: "Using arrays in Numba"
                 subtrees:
@@ -150,6 +141,13 @@ subtrees:
                         title: "Building array output [todo]"
                       - file: user-guide/how-to-use-in-numba-cuda
                         title: "Working with CUDA"
+
+              - file: user-guide/how-to-use-in-cpp
+                title: "Using arrays in C++"
+                subtrees:
+                  - entries:
+                      - file: user-guide/how-to-use-in-cpp-cppyy
+                        title: "JIT compiling operations in cppyy"
 
               - file: user-guide/how-to-specialize
                 title: "Specialized behavior"
