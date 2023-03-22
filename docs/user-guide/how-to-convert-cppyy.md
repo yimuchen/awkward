@@ -14,6 +14,8 @@ kernelspec:
 How to use Awkward Arrays in C++ with cppyy GIT
 ===============================================
 
+Note: Awkward Array can only work with `cppyy` 3.0.1 or later. `cppyy` must be in a different venv or conda environment from ROOT, if you have installed ROOT.
+
 The [cppyy](https://cppyy.readthedocs.io/en/latest/index.html) is an automatic, run-time, Python-C++ bindings generator, for calling C++ from Python and Python from C++. `cppyy` is based on the C++ interpreter `Cling`.
 
 `cppyy` can understand Awkward Arrays. When an {class}`ak.Array` type is passed to a C++ function defined in `cppyy`, a `__cast_cpp__` magic function of an {class}`ak.Array` is invoked. The function dynamically generates a C++ type and a view of the array, if it has not been generated yet.
