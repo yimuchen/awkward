@@ -17,7 +17,7 @@ subtrees:
         subtrees:
             - entries:
               - file: user-guide/10-minutes-to-awkward-array
-            
+
               - file: user-guide/how-to-convert
                 title: "Converting arrays"
                 subtrees:
@@ -38,6 +38,8 @@ subtrees:
                         title: "ROOT via Uproot"
                       - file: user-guide/how-to-convert-rdataframe
                         title: "ROOT via RDataFrame"
+                      - file: user-guide/how-to-convert-cppyy
+                        title: "Awkward Arrays acceleration with JIT-compilation in cppyy"
 
               - file: user-guide/how-to-create
                 title: "Creating new arrays"
@@ -130,6 +132,13 @@ subtrees:
                         title: 'Cartesian and "n choose k" [todo]'
                       - file: user-guide/how-to-combinatorics-best-match
                         title: "Best match between collections [todo]"
+
+              - file: user-guide/how-to-use-in-cppyy
+                title: "Awkward Arrays acceleration with JIT-compilation in cppyy"
+                subtrees:
+                  - entries:
+                      - file: user-guide/how-to-use-in-cppyy-features
+                        title: "Supported features"
 
               - file: user-guide/how-to-use-in-numba
                 title: "Using arrays in Numba"
