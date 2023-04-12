@@ -36,6 +36,9 @@ def to_layout(array, *, allow_record=True, allow_other=False, regulararray=True)
     Records) into a #ak.contents.Content and maybe #ak.record.Record or
     other types.
 
+    Scalar values (strings, bytes, 0D arrays, numbers, etc.) will be promoted
+    to 1D arrays of the same type.
+
     This function is usually used to sanitize inputs for other functions; it
     would rarely be used in a data analysis because #ak.contents.Content and
     #ak.record.Record are lower-level than #ak.Array.
@@ -78,6 +81,10 @@ def _impl(array, allow_record, allow_other, regulararray):
         return array.snapshot()
 
     elif nplike_of(array, default=None) is not None:
+        return from_arraylib(array, regulararray=regulararray, recordarray=True)
+
+    elif isinstance(array, np.generic):
+        array = numpy.asarray(array)
         return from_arraylib(array, regulararray=regulararray, recordarray=True)
 
     elif ak._util.in_module(array, "pyarrow"):
